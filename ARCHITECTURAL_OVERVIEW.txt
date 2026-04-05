@@ -1,0 +1,79 @@
+================================================================================
+BIASMODEL V2.5 - ARCHITECTURAL & WORKFLOW OVERVIEW
+================================================================================
+
+1. PROJECT OBJECTIVE
+--------------------
+A full-stack AI pipeline designed to generate professional assessments (CV 
+shortlisting, medical analysis, etc.) while strictly identifying and 
+eliminating cognitive and systemic biases.
+
+2. CORE STACK
+-------------
+- Backend: FastAPI (Python) using Server-Sent Events (SSE) for real-time logs.
+- Frontend: React (Vite) + Framer Motion for pipeline flow visualization.
+- Local Inference: Jan AI (Local Server) at 127.0.0.1:1337.
+- Local Model: Gemma-3-4B-VL-it-Gemini-Pro-Heretic-Uncensored-Thinking_Q4_k_m.
+- Cloud Auditor: Gemini 2.5 Flash (Google Generative AI).
+- RAG: DuckDuckGo Search (via 'ddgs' library).
+
+3. PIPELINE WORKFLOW (THE "UNBIASED LOOP")
+------------------------------------------
+Whenever a user submits a request, the system executes these steps:
+
+STEP A: RAG (Retrieval-Augmented Generation)
+- The system queries DuckDuckGo for "Standard hiring/fairness criteria" 
+  related to the task.
+- This context is fed to the Predictor to ensure it follows industry 
+  standards rather than internal stereotypes.
+
+STEP B: THE PREDICTOR (Local Gemma-3)
+- Generates the initial draft. 
+- Utilizes <think> tags to externalize internal reasoning.
+- If a "Penalty" is active (from a previous failed audit), the penalty 
+  reason is injected into the System Prompt as a "Strict Correction".
+
+STEP C: DOMAIN AUDITOR (Local Gemma-3)
+- Acts as a strict Fairness Auditor.
+- Analyzes the Predictor's output for sensitive attributes (Gender, Race, etc.).
+- Outputs a JSON object: {"is_biased": bool, "reason": str, "score": 1-10}.
+
+STEP D: META-AUDITOR (Local Gemma-3)
+- Validates the Auditor. It reviews the Auditor's logic and responds with 
+  "VALID" or "INVALID". This prevents "lazy auditing."
+
+STEP E: THE PENALTY LOOP
+- If [Bias Detected] AND [Audit Validated]:
+  1. The "Penalty Count" increments.
+  2. The bias reason is saved to "Penalty History".
+  3. The flow loops back to STEP B for regeneration (Max 3 Retries).
+
+STEP F: SUPREME FALLBACK (Gemini 2.5 Flash)
+- If the local loop fails 3 times, the system invokes the Online 
+  Supreme Auditor (Gemini 2.5 Flash).
+- Gemini provides the final authoritative verdict on whether the 
+  output is truly unbiased or if the process should error out.
+
+4. KEY TECHNICAL FEATURES
+-------------------------
+- Robust JSON Parsing: A surgical extraction regex handles cases where 
+  models wrap JSON in conversational text or markdown.
+- Error Silencing: RAG or API technical errors are hidden from the 
+  Predictor's input to prevent "error hallucination" in final results.
+- Visual Feedback: The frontend shows a live moving particle representing 
+  data flow and a specific "Loop Arrow" for penalty retries.
+
+5. HOW TO RUN
+-------------
+1. Start Jan AI Server (127.0.0.1:1337).
+2. Load the Gemma-3-Thinking model.
+3. Run 'start.bat' in the root folder.
+   - Window 1: FastAPI Backend (Port 8000).
+   - Window 2: Vite Frontend (Port 5173).
+
+6. ENVIRONMENT VARIABLES (.env)
+-------------------------------
+- GEMINI_API_KEY: Used for Supreme Auditor and Google Search fallback.
+- GOOGLE_CSE_ID: (Optional) If provided, enables Google Search RAG. 
+  Otherwise, DuckDuckGo is used automatically.
+================================================================================

@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "BiasModel Backend (FastAPI)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["main.py"],
+      "port": 8000,
+      "cwd": "D:\\Study_Document\\Programming\\biasmodel"
+    },
+    {
+      "name": "BiasModel Frontend (Vite)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173,
+      "cwd": "D:\\Study_Document\\Programming\\biasmodel\\frontend"
+    }
+  ]
+}

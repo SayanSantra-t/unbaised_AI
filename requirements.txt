@@ -6,3 +6,6 @@ google-generativeai
 openai
 python-dotenv
 google-api-python-client
+python-multipart
+pdfplumber
+python-docx
