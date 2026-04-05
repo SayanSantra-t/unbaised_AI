@@ -448,11 +448,15 @@ button.run-btn:disabled {
 .batch-empty p {
   margin: 0;
   font-size: 1rem;
+  max-width: 320px;
 }
 
 .batch-empty small {
   font-size: 0.8rem;
   opacity: 0.6;
+  max-width: 280px;
+  text-align: center;
+  line-height: 1.5;
 }
 
 /* ── Batch Stats Bar ── */
@@ -657,7 +661,7 @@ button.run-btn:disabled {
 
 /* ── Domain Banner (main view) ── */
 .domain-banner {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.6rem;
   padding: 0.55rem 1rem;
@@ -670,6 +674,10 @@ button.run-btn:disabled {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   align-self: flex-start;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── AI Prompt accordion ── */
