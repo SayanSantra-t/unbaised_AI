@@ -1,5 +1,20 @@
+# Python
 venv/
-.env
 __pycache__/
 *.pyc
+*.pyo
+.env
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Editor / OS
+.vscode/
+.idea/
 .DS_Store
+Thumbs.db
+
+# Secrets — keep example, ignore real
+!.env.example

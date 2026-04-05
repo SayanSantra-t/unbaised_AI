@@ -1,15 +1,18 @@
 import os
 import re
+import io
 import json
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 from dotenv import load_dotenv
 from openai import OpenAI
 import google.generativeai as genai
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from ddgs import DDGS
+import pdfplumber
+from docx import Document
 
 # Load environment variables
 load_dotenv()
@@ -129,25 +132,27 @@ async def call_gemini_auditor(raw_output, sensitive_attrs, task_type):
     except Exception as e:
         return {"is_biased": True, "reason": f"Gemini 2.5 Audit Failed: {str(e)}", "score": 10}
 
-async def generate_pipeline_events(input_data: str, task_type: str, sensitive_attrs: str, criteria: str):
+async def generate_pipeline_events(input_data: str, task_type: str, sensitive_attrs: str, criteria: str, system_prompt: str = ""):
     max_retries = 3
     attempt = 0
     penalty_history = []
-    
+
     yield {"event": "status", "data": "Searching DuckDuckGo for context..."}
-    rag_context = await asyncio.to_thread(search_tool_run, f"Standard hiring and fairness criteria for {task_type}")
+    rag_context = await asyncio.to_thread(search_tool_run, f"Standard fairness criteria for {task_type}")
     yield {"event": "rag_complete", "data": (rag_context[:200] + "...") if rag_context else "No web context found."}
 
     while attempt < max_retries:
         attempt += 1
         yield {"event": "attempt_start", "data": {"attempt": attempt}}
-        
+
         # Step 1: Predictor
         yield {"event": "predictor_start", "data": "Predictor (Gemma) thinking..."}
         penalty_text = "\n\nCRITICAL: DO NOT REPEAT THESE BIAS MISTAKES:\n" + "\n".join(penalty_history) if penalty_history else ""
-        
+
+        # Use domain-specific system prompt if provided, else fall back to generic
+        base_prompt = system_prompt if system_prompt.strip() else f"Expert {task_type} assistant."
         system = (
-            f"Expert {task_type} assistant. Criteria: {criteria}. {penalty_text}\n"
+            f"{base_prompt}\n\nEvaluation Criteria: {criteria}.{penalty_text}\n"
             "STRICT RULE: Do not mention 'API errors', 'RAG', or 'technical issues' in your output."
         )
         user = f"Input: {input_data}\nContext: {rag_context}\nGenerate a neutral, objective response."
@@ -199,12 +204,40 @@ async def generate_pipeline_events(input_data: str, task_type: str, sensitive_at
         yield {"event": "final_result", "data": raw_output}
 
 @app.get("/process")
-async def process(request: Request, input_data: str, task_type: str, sensitive_attrs: str, criteria: str):
+async def process(request: Request, input_data: str, task_type: str, sensitive_attrs: str, criteria: str, system_prompt: str = ""):
     async def event_generator():
-        async for event in generate_pipeline_events(input_data, task_type, sensitive_attrs, criteria):
+        async for event in generate_pipeline_events(input_data, task_type, sensitive_attrs, criteria, system_prompt):
             if await request.is_disconnected(): break
             yield json.dumps(event)
     return EventSourceResponse(event_generator())
+
+@app.post("/extract-cvs")
+async def extract_cvs(files: List[UploadFile] = File(...)):
+    """Extract plain text from uploaded CV files (PDF, DOCX, TXT)."""
+    results = []
+    for file in files:
+        content = await file.read()
+        fname = (file.filename or "").lower()
+        text = ""
+        try:
+            if fname.endswith(".pdf"):
+                with pdfplumber.open(io.BytesIO(content)) as pdf:
+                    text = "\n".join(
+                        page.extract_text() or "" for page in pdf.pages
+                    ).strip()
+            elif fname.endswith(".docx"):
+                doc = Document(io.BytesIO(content))
+                text = "\n".join(
+                    p.text for p in doc.paragraphs if p.text.strip()
+                ).strip()
+            elif fname.endswith(".txt"):
+                text = content.decode("utf-8", errors="ignore").strip()
+            else:
+                text = "[Unsupported file type]"
+        except Exception as e:
+            text = f"[Extraction error: {str(e)}]"
+        results.append({"filename": file.filename, "text": text})
+    return results
 
 if __name__ == "__main__":
     import uvicorn
