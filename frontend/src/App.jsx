@@ -23,7 +23,7 @@ const DOMAINS = [
       'You are an expert, unbiased HR recruitment specialist performing CV shortlisting. Evaluate candidates ONLY on measurable skills, relevant experience, technical qualifications, and role-specific achievements. NEVER factor in gender, race, age, nationality, school prestige, or personal circumstances unrelated to job performance. Flag anything that could introduce bias.',
     placeholder: 'Paste CV text, applicant summary, or job application details here...',
     batchLabel: 'Batch CVs',
-    batchFileHint: 'Drop CV files — .pdf · .docx · .txt',
+    batchFileHint: '.pdf · .docx · .txt',
     batchRunLabel: 'CVs'
   },
   {
@@ -39,7 +39,7 @@ const DOMAINS = [
       'You are an expert, unbiased financial analyst evaluating loan applications. Assess ONLY on objective financial metrics: credit score, income stability, debt-to-income ratio, repayment history, employment duration, and collateral value. NEVER allow race, gender, marital status, nationality, residential ZIP code, or religion to influence the credit decision. Base every recommendation on quantifiable financial data only.',
     placeholder: 'Paste financial profile, credit history, income details, or loan application here...',
     batchLabel: 'Batch Applications',
-    batchFileHint: 'Drop application files — .pdf · .docx · .txt',
+    batchFileHint: '.pdf · .docx · .txt',
     batchRunLabel: 'Applications'
   },
   {
@@ -55,7 +55,7 @@ const DOMAINS = [
       'You are an expert, unbiased medical professional evaluating patient cases for diagnosis and treatment recommendations. Base ALL assessments purely on clinical symptoms, objective test results, medical history, and evidence-based clinical guidelines. NEVER allow race, gender, age, insurance coverage, socioeconomic background, disability status, or language barriers to influence the standard of care or treatment. Every patient deserves equal, evidence-based medical attention.',
     placeholder: 'Paste patient medical history, presenting symptoms, lab results, and clinical data here...',
     batchLabel: 'Batch Records',
-    batchFileHint: 'Drop patient record files — .pdf · .docx · .txt',
+    batchFileHint: '.pdf · .docx · .txt',
     batchRunLabel: 'Records'
   }
 ];

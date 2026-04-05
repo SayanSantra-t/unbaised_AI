@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import csv
 import json
 import asyncio
 from typing import AsyncGenerator, List
@@ -211,32 +212,79 @@ async def process(request: Request, input_data: str, task_type: str, sensitive_a
             yield json.dumps(event)
     return EventSourceResponse(event_generator())
 
+def parse_tsv_dataset(raw_text: str, filename: str) -> List[dict]:
+    """
+    If a .txt file is a TSV dataset (has a 'Resume' column),
+    split it into one entry per row instead of one big blob.
+    Supports columns: Role, Resume, Decision, Reason_for_decision, Job_Description
+    """
+    try:
+        reader = csv.DictReader(io.StringIO(raw_text), delimiter='\t')
+        rows = list(reader)
+        # Only treat as dataset if it has a Resume column and 2+ rows
+        if rows and 'Resume' in rows[0]:
+            entries = []
+            for i, row in enumerate(rows):
+                resume_text = row.get('Resume', '').strip()
+                role        = row.get('Role', '').strip()
+                job_desc    = row.get('Job_Description', '').strip()
+                decision    = row.get('Decision', '').strip()
+                if not resume_text:
+                    continue
+                # Build rich context block for the AI
+                context = f"Role: {role}\n"
+                if job_desc:
+                    context += f"Job Description: {job_desc}\n"
+                if decision:
+                    context += f"Existing Decision: {decision}\n"
+                context += f"\n{resume_text}"
+                label = f"{role or f'Record {i+1}'} — row {i+1}"
+                entries.append({"filename": label, "text": context.strip()})
+            if entries:
+                return entries
+    except Exception:
+        pass
+    return []  # fallback: not a TSV dataset
+
 @app.post("/extract-cvs")
 async def extract_cvs(files: List[UploadFile] = File(...)):
-    """Extract plain text from uploaded CV files (PDF, DOCX, TXT)."""
+    """Extract text from uploaded CV files (PDF, DOCX, TXT) or TSV datasets."""
     results = []
     for file in files:
         content = await file.read()
         fname = (file.filename or "").lower()
-        text = ""
         try:
             if fname.endswith(".pdf"):
                 with pdfplumber.open(io.BytesIO(content)) as pdf:
                     text = "\n".join(
                         page.extract_text() or "" for page in pdf.pages
                     ).strip()
+                results.append({"filename": file.filename, "text": text})
+
             elif fname.endswith(".docx"):
                 doc = Document(io.BytesIO(content))
                 text = "\n".join(
                     p.text for p in doc.paragraphs if p.text.strip()
                 ).strip()
-            elif fname.endswith(".txt"):
-                text = content.decode("utf-8", errors="ignore").strip()
+                results.append({"filename": file.filename, "text": text})
+
+            elif fname.endswith(".txt") or fname.endswith(".tsv") or fname.endswith(".csv"):
+                raw = content.decode("utf-8", errors="ignore").strip()
+                # Try to parse as a multi-CV dataset first
+                dataset_rows = parse_tsv_dataset(raw, file.filename)
+                if dataset_rows:
+                    # Each row becomes its own card in the frontend
+                    results.extend(dataset_rows)
+                else:
+                    # Plain text file — single CV
+                    results.append({"filename": file.filename, "text": raw})
+
             else:
-                text = "[Unsupported file type]"
+                results.append({"filename": file.filename, "text": "[Unsupported file type]"})
+
         except Exception as e:
-            text = f"[Extraction error: {str(e)}]"
-        results.append({"filename": file.filename, "text": text})
+            results.append({"filename": file.filename, "text": f"[Extraction error: {str(e)}]"})
+
     return results
 
 if __name__ == "__main__":
