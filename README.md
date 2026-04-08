@@ -119,7 +119,7 @@ Then open **http://localhost:5173** 🎉
 
 ## 📁 Project Structure
 
-```
+```....
 unbaised_AI/
 ├── main.py                    # FastAPI backend — pipeline, /process, /extract-cvs
 ├── requirements.txt           # Python dependencies
