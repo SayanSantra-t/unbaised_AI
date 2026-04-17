@@ -6,20 +6,83 @@ A full-stack AI system that detects and eliminates bias in automated decisions a
 
 ---
 
-## 🧠 How It Works
+## 🧠 Architecture
 
-```
-User Input ──► RAG (DuckDuckGo) ──► Predictor (Gemma-3) ──► Local Auditor ──► Meta-Auditor
-                                          ▲                                         │
-                                          └──────── Penalty Loop (max 3x) ──────────┘
-                                                                                     │
-                                                                      Still biased? ─▼
-                                                              Supreme Auditor (Gemini 2.5 Flash)
-                                                                                     │
-                                                                       Final Unbiased Output ✅
+```mermaid
+flowchart TD
+    User(["👤 User Input\n─────────────\nCV / Loan App\nPatient Record"])
+
+    subgraph EDGE["🖥️ EDGE ENVIRONMENT (LOCAL)"]
+        direction TB
+
+        subgraph UI["Interface Layer"]
+            FE["⚛️ Frontend\nReact App"]
+            BE["⚡ Backend\nFastAPI + SSE"]
+        end
+
+        subgraph PIPELINE["AI Pipeline"]
+            RAG["🔍 RAG\nDuckDuckGo Search"]
+            PRED["🧠 Predictor\nGemma-3-4B"]
+            AUD["🛡️ Local Auditor\nGemma-3-4B"]
+            META["🔎 Meta-Auditor\nGemma-3-4B"]
+        end
+
+        subgraph MEMORY["Memory Streams (Vector DB)"]
+            VM1[("💾 Predictor\nMemory")]
+            VM2[("💾 Auditor\nMemory")]
+            VM3[("💾 Meta\nMemory")]
+        end
+    end
+
+    subgraph CLOUD["☁️ CLOUD FALLBACK"]
+        SUP["✨ Supreme Auditor\nGemini 2.5 Flash"]
+    end
+
+    RESULT(["✅ Final Unbiased\nOutput"])
+
+    User --> FE --> BE
+    BE --> RAG
+    RAG --> PRED
+    PRED --> AUD
+    AUD -- "Bias detected → inject penalty" --> PRED
+    AUD -- "Clean" --> META
+    META -- "Valid" --> RESULT
+    META -- "Invalid" --> PRED
+
+    PRED <-.-> VM1
+    AUD  <-.-> VM2
+    META <-.-> VM3
+
+    BE -- "Local loop\nexhausted (3×)" --> SUP
+    SUP --> RESULT
+
+    style EDGE fill:#1e293b,stroke:#334155,color:#f8fafc
+    style CLOUD fill:#1e1a0e,stroke:#f59e0b55,color:#f8fafc
+    style PIPELINE fill:#0f172a,stroke:#334155,color:#f8fafc
+    style UI fill:#0f172a,stroke:#334155,color:#f8fafc
+    style MEMORY fill:#0f172a,stroke:#334155,color:#f8fafc
+    style User fill:#6366f1,stroke:#6366f1,color:#fff
+    style RESULT fill:#10b981,stroke:#10b981,color:#fff
+    style SUP fill:#f59e0b,stroke:#f59e0b,color:#000
+    style FE fill:#1e293b,stroke:#6366f1,color:#f8fafc
+    style BE fill:#1e293b,stroke:#6366f1,color:#f8fafc
+    style RAG fill:#1e293b,stroke:#6366f1,color:#f8fafc
+    style PRED fill:#1e293b,stroke:#6366f1,color:#f8fafc
+    style AUD fill:#1e293b,stroke:#6366f1,color:#f8fafc
+    style META fill:#1e293b,stroke:#6366f1,color:#f8fafc
+    style VM1 fill:#0f172a,stroke:#475569,color:#94a3b8
+    style VM2 fill:#0f172a,stroke:#475569,color:#94a3b8
+    style VM3 fill:#0f172a,stroke:#475569,color:#94a3b8
 ```
 
-Each domain injects its own **AI system prompt**, **sensitive attribute list**, and **evaluation criteria** into the pipeline automatically.
+**Pipeline flow:**
+1. **RAG** — DuckDuckGo fetches real-world fairness context for the domain
+2. **Predictor** — Gemma-3 generates the initial decision/recommendation
+3. **Local Auditor** — Gemma-3 checks for bias; if found → injects penalty and loops back (max 3×)
+4. **Meta-Auditor** — verifies the auditor's own logic isn't flawed *(can be disabled for Speed Mode)*
+5. **Supreme Auditor** — Gemini 2.5 Flash fires only if all local retries fail
+
+Each domain auto-injects its own **system prompt**, **sensitive attribute list**, and **evaluation criteria**.
 
 ---
 
@@ -98,9 +161,9 @@ Get a Gemini API key free at: https://aistudio.google.com/app/apikey
 
 ### 7. Launch the app
 
-**Windows (one click):**
+**Windows (one click — auto setup + launch):**
 ```bash
-start.bat
+run.bat
 ```
 
 **Manual (two terminals):**
@@ -152,6 +215,7 @@ unbaised_AI/
 - Penalty loop — retries up to 3× injecting the bias reason back into the prompt
 - Expandable **AI System Prompt** editor per domain
 - Supreme Auditor (Gemini 2.5 Flash) fires automatically if local loop fails
+- **Meta-Auditor toggle** — disable for Speed Mode (auto-warned at 10+ files)
 
 ### Batch Mode
 | Domain | Tab Label | What you upload |
@@ -160,11 +224,14 @@ unbaised_AI/
 | Loan Provision | Batch Applications | Loan application files |
 | Medical Care | Batch Records | Patient record files |
 
-- Drag-and-drop multi-file upload
+- Drag-and-drop multi-file upload with **duplicate detection**
 - Text extracted server-side: `pdfplumber` → PDF, `python-docx` → DOCX
 - Files processed **sequentially** so local GPU isn't overwhelmed
-- Live status cards: Pending → Processing (shimmer) → Complete / Failed
-- Click any card to expand and read the full unbiased output
+- CVs auto-removed from queue once processed
+- Results split into **Selected / Not Selected / Needs Review** sections
+- **Export** accepted or rejected lists as `.txt` files
+- **👁 Workflow view** — see full pipeline logs per CV in a modal
+- **Speed Mode** toggle — skip Meta-Auditor for large batches (warned at 10+ files)
 
 ---
 

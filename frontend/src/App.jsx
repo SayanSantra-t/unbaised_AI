@@ -140,7 +140,8 @@ function App() {
   const [batchRunning, setBatchRunning] = useState(false);
   const [expandedCv, setExpandedCv] = useState(null);
   const [uploadError, setUploadError] = useState('');
-  const [workflowCv, setWorkflowCv] = useState(null); // workflow modal
+  const [workflowCv, setWorkflowCv] = useState(null);
+  const [skipMeta, setSkipMeta] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -184,7 +185,8 @@ function App() {
       task_type: activeDomain.task_type,
       sensitive_attrs: formData.sensitive_attrs,
       criteria: formData.criteria,
-      system_prompt: formData.system_prompt
+      system_prompt: formData.system_prompt,
+      skip_meta: skipMeta
     });
     const eventSource = new EventSource(`http://localhost:8000/process?${params}`);
 
@@ -218,6 +220,7 @@ function App() {
           );
           break;
         }
+        case 'meta_skipped': addLog('Meta-Auditor skipped — Speed Mode active.', 'penalty'); break;
         case 'meta_start': setCurrentStep('meta'); break;
         case 'meta_end':
           addLog(
@@ -302,7 +305,8 @@ function App() {
           task_type: activeDomain.task_type,
           sensitive_attrs: formData.sensitive_attrs,
           criteria: formData.criteria,
-          system_prompt: formData.system_prompt
+          system_prompt: formData.system_prompt,
+          skip_meta: skipMeta
         });
         const es = new EventSource(`http://localhost:8000/process?${params}`);
         const cvLogs = [];
@@ -446,6 +450,8 @@ function App() {
               </AnimatePresence>
             </div>
 
+            <MetaToggle skipMeta={skipMeta} setSkipMeta={setSkipMeta} count={1} />
+
             <button className="run-btn" style={{ '--rb': activeDomain.color }} onClick={handleRun} disabled={status === 'processing'}>
               {status === 'processing' ? 'Processing...' : `Run ${activeDomain.label} Pipeline`}
             </button>
@@ -499,6 +505,8 @@ function App() {
               <textarea rows={3} value={formData.criteria}
                 onChange={e => setFormData({ ...formData, criteria: e.target.value })} />
             </div>
+
+            <MetaToggle skipMeta={skipMeta} setSkipMeta={setSkipMeta} count={queueList.length} />
 
             <button className="run-btn" style={{ '--rb': activeDomain.color }}
               onClick={runBatch} disabled={batchRunning || !queueList.length}>
@@ -901,6 +909,45 @@ const StepBox = ({ title, active, icon, status, penaltyCount, highlight, accentC
     <div className="status">{status}</div>
   </motion.div>
 );
+
+const MetaToggle = ({ skipMeta, setSkipMeta, count }) => {
+  const showWarning = count >= 10 && !skipMeta;
+  return (
+    <div className={`meta-toggle-box ${skipMeta ? 'speed-mode' : ''}`}>
+      <div className="meta-toggle-row">
+        <div className="meta-toggle-label">
+          <span className="meta-toggle-title">Meta-Auditor</span>
+          <span className="meta-toggle-sub">{skipMeta ? 'Disabled — Speed Mode' : 'Enabled — Accuracy Mode'}</span>
+        </div>
+        <button
+          className={`toggle-switch ${skipMeta ? 'off' : 'on'}`}
+          onClick={() => setSkipMeta(p => !p)}
+          title="Toggle Meta-Auditor"
+        >
+          <motion.div className="toggle-thumb" layout transition={{ duration: 0.2 }} />
+        </button>
+      </div>
+      <AnimatePresence>
+        {skipMeta && (
+          <motion.div className="meta-warning speed"
+            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }}>
+            <AlertTriangle size={11} />
+            Speed Mode: skips Meta-Auditor verification. Faster but may reduce accuracy.
+          </motion.div>
+        )}
+        {showWarning && (
+          <motion.div className="meta-warning bulk"
+            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }}>
+            <AlertTriangle size={11} />
+            {count} files detected — consider enabling Speed Mode for faster processing.
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
 
 const Connector = ({ active, color }) => (
   <div className="connector">

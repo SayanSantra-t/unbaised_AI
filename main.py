@@ -30,20 +30,19 @@ app.add_middleware(
 
 # 1. Local Jan AI (Predictor & Primary Auditor)
 client = OpenAI(
-    base_url="http://127.0.0.1:1337/v1", 
-    api_key="jan-local" 
+    base_url="http://127.0.0.1:1337/v1",
+    api_key="jan-local"
 )
 LOCAL_MODEL_ID = "Gemma-3-4B-VL-it-Gemini-Pro-Heretic-Uncensored-Thinking_Q4_k_m"
 
 # 2. Online Gemini Auditor (Secondary / Supreme Auditor)
-# Using "gemini-2.5-flash" as requested by user
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY not found in environment. Supreme Auditor will fail.")
 else:
     genai.configure(api_key=GEMINI_API_KEY)
 SUPREME_MODEL_ID = "gemini-2.5-flash"
-gemini_model = genai.GenerativeModel(SUPREME_MODEL_ID) 
+gemini_model = genai.GenerativeModel(SUPREME_MODEL_ID)
 
 from googleapiclient.discovery import build
 
@@ -99,14 +98,14 @@ async def call_jan_model_async(system_content, user_content, temperature=0.3):
     try:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
-            None, 
+            None,
             lambda: client.chat.completions.create(
                 model=LOCAL_MODEL_ID,
                 messages=[
                     {"role": "system", "content": system_content},
                     {"role": "user", "content": user_content}
                 ],
-                temperature=temperature, 
+                temperature=temperature,
             )
         )
         raw_output = response.choices[0].message.content
@@ -133,7 +132,7 @@ async def call_gemini_auditor(raw_output, sensitive_attrs, task_type):
     except Exception as e:
         return {"is_biased": True, "reason": f"Gemini 2.5 Audit Failed: {str(e)}", "score": 10}
 
-async def generate_pipeline_events(input_data: str, task_type: str, sensitive_attrs: str, criteria: str, system_prompt: str = ""):
+async def generate_pipeline_events(input_data: str, task_type: str, sensitive_attrs: str, criteria: str, system_prompt: str = "", skip_meta: bool = False):
     max_retries = 3
     attempt = 0
     penalty_history = []
@@ -150,30 +149,29 @@ async def generate_pipeline_events(input_data: str, task_type: str, sensitive_at
         yield {"event": "predictor_start", "data": "Predictor (Gemma) thinking..."}
         penalty_text = "\n\nCRITICAL: DO NOT REPEAT THESE BIAS MISTAKES:\n" + "\n".join(penalty_history) if penalty_history else ""
 
-        # Use domain-specific system prompt if provided, else fall back to generic
         base_prompt = system_prompt if system_prompt.strip() else f"Expert {task_type} assistant."
         system = (
             f"{base_prompt}\n\nEvaluation Criteria: {criteria}.{penalty_text}\n"
             "STRICT RULE: Do not mention 'API errors', 'RAG', or 'technical issues' in your output."
         )
         user = f"Input: {input_data}\nContext: {rag_context}\nGenerate a neutral, objective response."
-        
+
         raw_output, thoughts = await call_jan_model_async(system, user)
         if not raw_output: break
         yield {"event": "predictor_end", "data": {"output": raw_output, "thoughts": thoughts}}
-        
+
         # Step 2: Local Auditor
         yield {"event": "audit_start", "data": "Local Auditor checking for bias..."}
         audit_system = "Fairness Auditor. Respond ONLY with JSON: {\"is_biased\": bool, \"reason\": str, \"score\": int}"
         audit_user = f"Audit this for bias ({sensitive_attrs}):\n\n{raw_output}"
-        
+
         audit_raw, audit_thoughts = await call_jan_model_async(audit_system, audit_user)
         audit_data = clean_json_response(audit_raw)
-        
+
         if not audit_data:
             is_biased = "true" in (audit_raw or "").lower()
             audit_data = {"is_biased": is_biased, "reason": "Extracted from text.", "score": 6}
-        
+
         is_biased = audit_data.get("is_biased", False)
         reason = audit_data.get("reason", "Unknown")
         yield {"event": "audit_end", "data": {**audit_data, "thoughts": audit_thoughts, "source": "Local"}}
@@ -181,9 +179,14 @@ async def generate_pipeline_events(input_data: str, task_type: str, sensitive_at
         if is_biased:
             penalty_history.append(reason)
             yield {"event": "penalty", "data": {"reason": reason, "penalty_count": len(penalty_history)}}
-            continue 
+            continue
 
-        # Step 3: Meta-Auditor
+        # Step 3: Meta-Auditor (skippable for speed)
+        if skip_meta:
+            yield {"event": "meta_skipped", "data": "Meta-Auditor skipped (Speed Mode)."}
+            yield {"event": "final_result", "data": raw_output}
+            return
+
         yield {"event": "meta_start", "data": "Meta-Auditor verifying audit logic..."}
         meta_raw, meta_thoughts = await call_jan_model_async("Meta-Auditor. Respond VALID/INVALID.", f"Audit result: {audit_raw}")
         is_valid = "VALID" in (meta_raw or "").upper()
@@ -205,9 +208,9 @@ async def generate_pipeline_events(input_data: str, task_type: str, sensitive_at
         yield {"event": "final_result", "data": raw_output}
 
 @app.get("/process")
-async def process(request: Request, input_data: str, task_type: str, sensitive_attrs: str, criteria: str, system_prompt: str = ""):
+async def process(request: Request, input_data: str, task_type: str, sensitive_attrs: str, criteria: str, system_prompt: str = "", skip_meta: bool = False):
     async def event_generator():
-        async for event in generate_pipeline_events(input_data, task_type, sensitive_attrs, criteria, system_prompt):
+        async for event in generate_pipeline_events(input_data, task_type, sensitive_attrs, criteria, system_prompt, skip_meta):
             if await request.is_disconnected(): break
             yield json.dumps(event)
     return EventSourceResponse(event_generator())
