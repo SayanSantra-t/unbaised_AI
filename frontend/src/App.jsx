@@ -4,7 +4,7 @@ import {
   ShieldCheck, BrainCircuit, Terminal, CloudLightning, Monitor,
   FileText, Upload, X, CheckCircle, XCircle, Clock,
   ChevronDown, ChevronUp, Layers, Briefcase, DollarSign,
-  HeartPulse, ChevronRight, AlertTriangle
+  HeartPulse, ChevronRight, AlertTriangle, Download, Eye
 } from 'lucide-react';
 import './App.css';
 
@@ -60,9 +60,59 @@ const DOMAINS = [
   }
 ];
 
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+const parseVerdict = (text) => {
+  if (!text) return 'review';
+  const t = text.toLowerCase();
+  const rejectPhrases = [
+    'reject', 'not selected', 'not recommended', 'declined', 'disqualified',
+    'does not meet', 'insufficient', 'unsuitable', 'not suitable', 'not qualify',
+    'below requirements', 'not shortlisted', 'cannot recommend', 'do not recommend'
+  ];
+  const acceptPhrases = [
+    'accept', 'selected', 'recommended', 'shortlist', 'hire', 'qualified',
+    'strong candidate', 'strong contender', 'approve', 'approved', 'proceed',
+    'invite for interview', 'move forward', 'advance'
+  ];
+  if (rejectPhrases.some(w => t.includes(w))) return 'rejected';
+  if (acceptPhrases.some(w => t.includes(w))) return 'accepted';
+  return 'review';
+};
+
+const extractReason = (text) => {
+  if (!text) return '';
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (
+      lower.includes('verdict') || lower.includes('recommendation') ||
+      lower.includes('decision') || lower.includes('overall') ||
+      lower.includes('conclusion') || lower.includes('summary')
+    ) {
+      const clean = line.replace(/\*+/g, '').replace(/^[-•:#]+\s*/, '').trim();
+      if (clean.length > 10 && clean.length < 250) return clean;
+    }
+  }
+  const first = lines.find(l => l.length > 20 && !l.startsWith('#') && !l.startsWith('*'));
+  return first ? first.replace(/\*+/g, '').substring(0, 160) + (first.length > 160 ? '...' : '') : '';
+};
+
+const exportToFile = (cvItems, filename) => {
+  const content = cvItems
+    .map(cv => `=== ${cv.filename} ===\n${cv.result || 'No result'}\n`)
+    .join('\n' + '─'.repeat(60) + '\n\n');
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 // ── MAIN APP ─────────────────────────────────────────────────────────────────
 function App() {
-  const [mode, setMode] = useState('manual'); // 'manual' | 'batch'
+  const [mode, setMode] = useState('manual');
   const [activeDomain, setActiveDomain] = useState(DOMAINS[0]);
 
   const [formData, setFormData] = useState({
@@ -73,7 +123,7 @@ function App() {
   });
   const [showPrompt, setShowPrompt] = useState(false);
 
-  // Manual mode state
+  // Manual mode
   const [logs, setLogs] = useState([]);
   const [status, setStatus] = useState('idle');
   const [currentStep, setCurrentStep] = useState(null);
@@ -84,19 +134,20 @@ function App() {
   const [auditorSource, setAuditorSource] = useState('Local');
   const logEndRef = useRef(null);
 
-  // Batch mode state
+  // Batch mode
   const [cvList, setCvList] = useState([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
   const [expandedCv, setExpandedCv] = useState(null);
   const [uploadError, setUploadError] = useState('');
+  const [workflowCv, setWorkflowCv] = useState(null); // workflow modal
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  // ── Domain switch ──
+  // ── Domain switch — clears CV queue ──
   const handleDomainChange = (domain) => {
     setActiveDomain(domain);
     setFormData(prev => ({
@@ -104,7 +155,6 @@ function App() {
       sensitive_attrs: domain.sensitive_attrs,
       criteria: domain.criteria,
       system_prompt: domain.system_prompt,
-      // reset input only if still on the default placeholder
       input_data: DOMAINS.some(d => d.placeholder === prev.input_data)
         ? domain.placeholder
         : prev.input_data
@@ -112,11 +162,12 @@ function App() {
     setFinalResult('');
     setLogs([]);
     setStatus('idle');
+    // Auto-clear pending queue when domain changes
+    setCvList(prev => prev.filter(c => c.status === 'complete' || c.status === 'error'));
   };
 
-  const addLog = (msg, type = 'info', extra = null) => {
+  const addLog = (msg, type = 'info', extra = null) =>
     setLogs(prev => [...prev, { msg, type, extra, id: Date.now() + Math.random() }]);
-  };
 
   // ── Manual run ──
   const handleRun = () => {
@@ -159,7 +210,9 @@ function App() {
           const { is_biased, reason, score, thoughts, source } = data.data;
           setAuditorSource(source || 'Local');
           addLog(
-            is_biased ? `[${source}] BIAS DETECTED! Score: ${score}/10. Reason: ${reason}` : `[${source}] Audit passed. Score: ${score}/10.`,
+            is_biased
+              ? `[${source}] BIAS DETECTED! Score: ${score}/10. Reason: ${reason}`
+              : `[${source}] Audit passed. Score: ${score}/10.`,
             is_biased ? 'error' : 'success',
             { thoughts }
           );
@@ -194,12 +247,10 @@ function App() {
     };
   };
 
-  // ── Batch file upload ──
+  // ── Batch file upload — with dedup ──
   const handleFiles = async (files) => {
     setUploadError('');
-    const valid = Array.from(files).filter(f =>
-      /\.(pdf|docx|txt)$/i.test(f.name)
-    );
+    const valid = Array.from(files).filter(f => /\.(pdf|docx|txt)$/i.test(f.name));
     if (!valid.length) {
       setUploadError('Only .pdf, .docx, and .txt files are supported.');
       return;
@@ -210,17 +261,27 @@ function App() {
       const res = await fetch('http://localhost:8000/extract-cvs', { method: 'POST', body: fd });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const extracted = await res.json();
-      setCvList(prev => [
-        ...prev,
-        ...extracted.map(cv => ({
-          id: Date.now() + Math.random(),
-          filename: cv.filename,
-          text: cv.text,
-          charCount: cv.text.length,
-          status: 'pending',
-          result: null
-        }))
-      ]);
+      setCvList(prev => {
+        const existingNames = new Set(prev.map(c => c.filename));
+        const newCvs = extracted.filter(cv => !existingNames.has(cv.filename));
+        const dupCount = extracted.length - newCvs.length;
+        if (dupCount > 0)
+          setUploadError(`${dupCount} duplicate${dupCount > 1 ? 's' : ''} skipped.`);
+        return [
+          ...prev,
+          ...newCvs.map(cv => ({
+            id: Date.now() + Math.random(),
+            filename: cv.filename,
+            text: cv.text,
+            charCount: cv.text.length,
+            status: 'pending',
+            result: null,
+            verdict: null,
+            reason: '',
+            logs: []
+          }))
+        ];
+      });
     } catch (e) {
       setUploadError(`Upload failed: ${e.message}`);
     }
@@ -229,12 +290,11 @@ function App() {
   const removeCv = (id) => setCvList(prev => prev.filter(c => c.id !== id));
   const clearAll = () => { setCvList([]); setExpandedCv(null); };
 
-  // ── Batch run ──
+  // ── Batch run — captures logs per CV, removes from queue on complete ──
   const runBatch = async () => {
     setBatchRunning(true);
-    const snapshot = [...cvList];
+    const snapshot = cvList.filter(c => c.status === 'pending');
     for (const cv of snapshot) {
-      if (cv.status === 'complete') continue;
       await new Promise((resolve) => {
         setCvList(prev => prev.map(c => c.id === cv.id ? { ...c, status: 'processing' } : c));
         const params = new URLSearchParams({
@@ -245,18 +305,35 @@ function App() {
           system_prompt: formData.system_prompt
         });
         const es = new EventSource(`http://localhost:8000/process?${params}`);
+        const cvLogs = [];
         es.onmessage = (e) => {
           const p = JSON.parse(e.data);
+          cvLogs.push(p);
           if (p.event === 'final_result') {
-            setCvList(prev => prev.map(c => c.id === cv.id ? { ...c, status: 'complete', result: p.data } : c));
+            setCvList(prev => prev.map(c => c.id === cv.id ? {
+              ...c,
+              status: 'complete',
+              result: p.data,
+              verdict: parseVerdict(p.data),
+              reason: extractReason(p.data),
+              logs: [...cvLogs]
+            } : c));
             es.close(); resolve();
           } else if (p.event === 'error') {
-            setCvList(prev => prev.map(c => c.id === cv.id ? { ...c, status: 'error', result: p.data } : c));
+            setCvList(prev => prev.map(c => c.id === cv.id ? {
+              ...c,
+              status: 'error',
+              result: p.data,
+              verdict: 'error',
+              logs: [...cvLogs]
+            } : c));
             es.close(); resolve();
           }
         };
         es.onerror = () => {
-          setCvList(prev => prev.map(c => c.id === cv.id ? { ...c, status: 'error', result: 'Connection failed' } : c));
+          setCvList(prev => prev.map(c => c.id === cv.id ? {
+            ...c, status: 'error', result: 'Connection failed', verdict: 'error', logs: cvLogs
+          } : c));
           es.close(); resolve();
         };
       });
@@ -264,20 +341,29 @@ function App() {
     setBatchRunning(false);
   };
 
-  const completedCount = cvList.filter(c => c.status === 'complete').length;
-  const errorCount    = cvList.filter(c => c.status === 'error').length;
-  const pendingCount  = cvList.filter(c => c.status === 'pending').length;
+  // Derived lists
+  const queueList     = cvList.filter(c => c.status === 'pending' || c.status === 'processing');
+  const acceptedCvs   = cvList.filter(c => c.status === 'complete' && c.verdict === 'accepted');
+  const rejectedCvs   = cvList.filter(c => c.status === 'complete' && c.verdict === 'rejected');
+  const reviewCvs     = cvList.filter(c => c.status === 'complete' && c.verdict === 'review');
+  const errorCvs      = cvList.filter(c => c.status === 'error');
   const processingIdx = cvList.findIndex(c => c.status === 'processing');
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="app-container">
 
+      {/* Workflow Modal */}
+      <AnimatePresence>
+        {workflowCv && (
+          <WorkflowModal cv={workflowCv} onClose={() => setWorkflowCv(null)} accentColor={activeDomain.color} />
+        )}
+      </AnimatePresence>
+
       {/* ── SIDEBAR ── */}
       <aside className="sidebar">
         <h1>BiasModel v2.5</h1>
 
-        {/* Domain Selector */}
         <div className="domain-section">
           <label>Analysis Domain</label>
           <div className="domain-cards">
@@ -299,7 +385,6 @@ function App() {
           </div>
         </div>
 
-        {/* Mode Tabs */}
         <div className="mode-tabs">
           <button className={`mode-tab ${mode === 'manual' ? 'active' : ''}`} onClick={() => setMode('manual')}>
             <BrainCircuit size={13} /> Manual
@@ -336,7 +421,6 @@ function App() {
               />
             </div>
 
-            {/* AI Prompt accordion */}
             <div className="prompt-accordion">
               <button className="prompt-toggle" onClick={() => setShowPrompt(p => !p)}>
                 <span>AI System Prompt</span>
@@ -368,7 +452,6 @@ function App() {
           </>
         ) : (
           <>
-            {/* Drop Zone */}
             <div
               className={`drop-zone ${isDragOver ? 'drag-over' : ''}`}
               onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
@@ -387,13 +470,14 @@ function App() {
               <div className="upload-error"><AlertTriangle size={13} /> {uploadError}</div>
             )}
 
-            {cvList.length > 0 && (
+            {/* Queue — only pending/processing */}
+            {queueList.length > 0 && (
               <div className="cv-list">
                 <div className="cv-list-header">
-                  <span>{cvList.length} file{cvList.length !== 1 ? 's' : ''} loaded</span>
+                  <span>{queueList.length} in queue</span>
                   <button className="clear-btn" onClick={clearAll} disabled={batchRunning}>Clear all</button>
                 </div>
-                {cvList.map(cv => (
+                {queueList.map(cv => (
                   <div key={cv.id} className={`cv-item status-${cv.status}`}>
                     <FileText size={12} />
                     <span className="cv-filename" title={cv.filename}>{cv.filename}</span>
@@ -417,10 +501,10 @@ function App() {
             </div>
 
             <button className="run-btn" style={{ '--rb': activeDomain.color }}
-              onClick={runBatch} disabled={batchRunning || !cvList.length}>
+              onClick={runBatch} disabled={batchRunning || !queueList.length}>
               {batchRunning
-                ? `Processing ${completedCount + errorCount + 1}/${cvList.length}...`
-                : `Run ${cvList.length || ''} ${activeDomain.batchRunLabel} — ${activeDomain.label}`}
+                ? `Processing ${processingIdx + 1}/${cvList.length}...`
+                : `Run ${queueList.length || ''} ${activeDomain.batchRunLabel} — ${activeDomain.label}`}
             </button>
           </>
         )}
@@ -433,8 +517,6 @@ function App() {
 
       {/* ── MAIN VIEW ── */}
       <main className="main-view">
-
-        {/* Domain Banner */}
         <div className="domain-banner" style={{ '--db': activeDomain.color }}>
           <activeDomain.Icon size={18} />
           <span>{activeDomain.task_type}</span>
@@ -492,7 +574,7 @@ function App() {
           </>
         ) : (
           /* ── BATCH VIEW ── */
-          cvList.length === 0 ? (
+          cvList.length === 0 && queueList.length === 0 ? (
             <div className="batch-empty">
               <activeDomain.Icon size={52} style={{ color: activeDomain.color, opacity: 0.35 }} />
               <p>Upload files in the sidebar to begin batch processing.</p>
@@ -500,11 +582,13 @@ function App() {
             </div>
           ) : (
             <>
+              {/* Stats */}
               <div className="batch-stats">
                 <StatCard label="Total"    value={cvList.length} />
-                <StatCard label="Complete" value={completedCount} color={activeDomain.color} />
-                <StatCard label="Failed"   value={errorCount}    color="var(--error)" />
-                <StatCard label="Pending"  value={pendingCount}  color="var(--text-dim)" />
+                <StatCard label="Selected" value={acceptedCvs.length} color="#10b981" />
+                <StatCard label="Rejected" value={rejectedCvs.length} color="var(--error)" />
+                <StatCard label="Review"   value={reviewCvs.length}   color="var(--accent)" />
+                <StatCard label="Queue"    value={queueList.length}   color="var(--text-dim)" />
                 {batchRunning && processingIdx !== -1 && (
                   <div className="processing-label">
                     <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.2, repeat: Infinity }}>
@@ -513,14 +597,84 @@ function App() {
                   </div>
                 )}
               </div>
-              <div className="cv-results-grid">
-                {cvList.map(cv => (
-                  <CvResultCard key={cv.id} cv={cv}
-                    expanded={expandedCv === cv.id}
-                    accentColor={activeDomain.color}
-                    onToggle={() => setExpandedCv(expandedCv === cv.id ? null : cv.id)} />
-                ))}
-              </div>
+
+              {/* Selected Section */}
+              {acceptedCvs.length > 0 && (
+                <ResultSection
+                  title="Selected"
+                  color="#10b981"
+                  icon={<CheckCircle size={16} />}
+                  cvs={acceptedCvs}
+                  expandedCv={expandedCv}
+                  setExpandedCv={setExpandedCv}
+                  setWorkflowCv={setWorkflowCv}
+                  accentColor="#10b981"
+                  onExport={() => exportToFile(acceptedCvs, `selected_${activeDomain.key}.txt`)}
+                />
+              )}
+
+              {/* Rejected Section */}
+              {rejectedCvs.length > 0 && (
+                <ResultSection
+                  title="Not Selected"
+                  color="var(--error)"
+                  icon={<XCircle size={16} />}
+                  cvs={rejectedCvs}
+                  expandedCv={expandedCv}
+                  setExpandedCv={setExpandedCv}
+                  setWorkflowCv={setWorkflowCv}
+                  accentColor="var(--error)"
+                  onExport={() => exportToFile(rejectedCvs, `rejected_${activeDomain.key}.txt`)}
+                />
+              )}
+
+              {/* Review Section */}
+              {reviewCvs.length > 0 && (
+                <ResultSection
+                  title="Needs Review"
+                  color="var(--accent)"
+                  icon={<AlertTriangle size={16} />}
+                  cvs={reviewCvs}
+                  expandedCv={expandedCv}
+                  setExpandedCv={setExpandedCv}
+                  setWorkflowCv={setWorkflowCv}
+                  accentColor="var(--accent)"
+                  onExport={() => exportToFile(reviewCvs, `review_${activeDomain.key}.txt`)}
+                />
+              )}
+
+              {/* Error Section */}
+              {errorCvs.length > 0 && (
+                <ResultSection
+                  title="Errors"
+                  color="#475569"
+                  icon={<XCircle size={16} />}
+                  cvs={errorCvs}
+                  expandedCv={expandedCv}
+                  setExpandedCv={setExpandedCv}
+                  setWorkflowCv={setWorkflowCv}
+                  accentColor="#475569"
+                  onExport={null}
+                />
+              )}
+
+              {/* Processing / pending placeholders */}
+              {queueList.length > 0 && (
+                <div className="result-section">
+                  <div className="result-section-header" style={{ color: 'var(--primary)' }}>
+                    <motion.div animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.2, repeat: Infinity }} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <BrainCircuit size={16} />
+                      <span>In Queue — {queueList.length} remaining</span>
+                    </motion.div>
+                  </div>
+                  <div className="cv-results-grid">
+                    {queueList.map(cv => (
+                      <CvResultCard key={cv.id} cv={cv} expanded={false}
+                        accentColor={activeDomain.color} onToggle={() => {}} onWorkflow={null} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )
         )}
@@ -529,50 +683,92 @@ function App() {
   );
 }
 
-// ── SUB-COMPONENTS ────────────────────────────────────────────────────────────
-
-const StatCard = ({ label, value, color }) => (
-  <div className="stat-card">
-    <span className="stat-value" style={color ? { color } : {}}>{value}</span>
-    <span className="stat-label">{label}</span>
+// ── RESULT SECTION ────────────────────────────────────────────────────────────
+const ResultSection = ({ title, color, icon, cvs, expandedCv, setExpandedCv, setWorkflowCv, accentColor, onExport }) => (
+  <div className="result-section">
+    <div className="result-section-header" style={{ color }}>
+      {icon}
+      <span>{title} ({cvs.length})</span>
+      {onExport && (
+        <button className="export-btn" onClick={onExport} title={`Download ${title} as .txt`}>
+          <Download size={13} /> Export
+        </button>
+      )}
+    </div>
+    <div className="cv-results-grid">
+      {cvs.map(cv => (
+        <CvResultCard
+          key={cv.id}
+          cv={cv}
+          expanded={expandedCv === cv.id}
+          accentColor={accentColor}
+          onToggle={() => setExpandedCv(expandedCv === cv.id ? null : cv.id)}
+          onWorkflow={() => setWorkflowCv(cv)}
+        />
+      ))}
+    </div>
   </div>
 );
 
-const CvResultCard = ({ cv, expanded, onToggle, accentColor }) => {
-  const icons = {
-    pending:    <Clock size={15} color="var(--text-dim)" />,
-    processing: (
-      <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} style={{ display: 'flex' }}>
-        <BrainCircuit size={15} color={accentColor} />
-      </motion.div>
-    ),
-    complete: <CheckCircle size={15} color={accentColor} />,
-    error:    <XCircle size={15} color="var(--error)" />,
+// ── CV RESULT CARD ────────────────────────────────────────────────────────────
+const CvResultCard = ({ cv, expanded, onToggle, accentColor, onWorkflow }) => {
+  const verdictConfig = {
+    accepted: { label: 'SELECTED',     color: '#10b981', icon: <CheckCircle size={14} /> },
+    rejected: { label: 'NOT SELECTED', color: '#ef4444', icon: <XCircle size={14} />    },
+    review:   { label: 'NEEDS REVIEW', color: '#f59e0b', icon: <AlertTriangle size={14} /> },
+    error:    { label: 'ERROR',        color: '#475569', icon: <XCircle size={14} />    },
   };
+  const vc = verdictConfig[cv.verdict] || null;
+
+  const spinIcon = (
+    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} style={{ display: 'flex' }}>
+      <BrainCircuit size={15} color={accentColor} />
+    </motion.div>
+  );
 
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-      className={`cv-result-card status-${cv.status}`}
-      style={cv.status === 'complete' ? { borderColor: accentColor } : {}}>
+      className={`cv-result-card status-${cv.status} ${cv.verdict ? `verdict-${cv.verdict}` : ''}`}>
+
+      {/* Header */}
       <div className="cv-result-header" onClick={cv.result ? onToggle : undefined}
         style={{ cursor: cv.result ? 'pointer' : 'default' }}>
         <div className="cv-result-meta">
-          {icons[cv.status]}
+          {cv.status === 'processing' ? spinIcon
+            : cv.status === 'pending'   ? <Clock size={15} color="var(--text-dim)" />
+            : cv.status === 'complete'  ? (vc ? React.cloneElement(vc.icon, { color: vc.color }) : <CheckCircle size={15} color={accentColor} />)
+            : <XCircle size={15} color="var(--error)" />}
           <div>
-            <div className="cv-result-filename">{cv.filename}</div>
-            <div className="cv-result-badge" style={
-              cv.status === 'complete' ? { color: accentColor } :
-              cv.status === 'error'    ? { color: 'var(--error)' } :
-              cv.status === 'processing' ? { color: accentColor } :
-              { color: 'var(--text-dim)' }
-            }>
-              {cv.status.charAt(0).toUpperCase() + cv.status.slice(1)}
-            </div>
+            <div className="cv-result-filename" title={cv.filename}>{cv.filename}</div>
+            {vc ? (
+              <div className="verdict-badge" style={{ color: vc.color, borderColor: vc.color + '44', background: vc.color + '14' }}>
+                {vc.label}
+              </div>
+            ) : (
+              <div className="cv-result-badge" style={{ color: cv.status === 'processing' ? accentColor : 'var(--text-dim)' }}>
+                {cv.status.charAt(0).toUpperCase() + cv.status.slice(1)}
+              </div>
+            )}
           </div>
         </div>
-        {cv.result && <span className="expand-btn">{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>}
+        <div className="card-actions">
+          {onWorkflow && cv.logs?.length > 0 && (
+            <button className="workflow-btn" onClick={e => { e.stopPropagation(); onWorkflow(); }} title="View full pipeline workflow">
+              <Eye size={13} />
+            </button>
+          )}
+          {cv.result && <span className="expand-btn">{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>}
+        </div>
       </div>
 
+      {/* Reason snippet */}
+      {cv.reason && !expanded && (
+        <div className="cv-result-reason" onClick={onToggle} style={{ cursor: 'pointer' }}>
+          {cv.reason}
+        </div>
+      )}
+
+      {/* Processing bar */}
       {cv.status === 'processing' && (
         <div className="cv-processing-track">
           <motion.div className="cv-processing-fill" style={{ background: accentColor }}
@@ -580,6 +776,7 @@ const CvResultCard = ({ cv, expanded, onToggle, accentColor }) => {
         </div>
       )}
 
+      {/* Expanded result */}
       <AnimatePresence initial={false}>
         {expanded && cv.result && (
           <motion.div key="body"
@@ -593,6 +790,100 @@ const CvResultCard = ({ cv, expanded, onToggle, accentColor }) => {
     </motion.div>
   );
 };
+
+// ── WORKFLOW MODAL ────────────────────────────────────────────────────────────
+const WorkflowModal = ({ cv, onClose, accentColor }) => {
+  const renderLog = (event, idx) => {
+    let msg = '', type = 'info', thoughts = null;
+    switch (event.event) {
+      case 'status':         msg = event.data; break;
+      case 'rag_complete':   msg = `RAG Context: ${event.data}`; type = 'success'; break;
+      case 'attempt_start':  msg = `Starting Attempt #${event.data.attempt}...`; break;
+      case 'predictor_start': msg = 'Predictor (Gemma) thinking...'; break;
+      case 'predictor_end':
+        msg = 'Draft generated by Predictor.';
+        type = 'success';
+        thoughts = event.data.thoughts;
+        break;
+      case 'audit_start':    msg = 'Local Auditor checking for bias...'; break;
+      case 'audit_end': {
+        const { is_biased, reason, score, source } = event.data;
+        msg = is_biased
+          ? `[${source}] BIAS DETECTED! Score: ${score}/10. Reason: ${reason}`
+          : `[${source}] Audit passed. Score: ${score}/10.`;
+        type = is_biased ? 'error' : 'success';
+        thoughts = event.data.thoughts;
+        break;
+      }
+      case 'meta_start':  msg = 'Meta-Auditor verifying audit logic...'; break;
+      case 'meta_end':
+        msg = event.data.is_valid ? 'Audit Validated.' : 'Audit Rejected.';
+        type = event.data.is_valid ? 'success' : 'error';
+        thoughts = event.data.thoughts;
+        break;
+      case 'penalty':  msg = `Penalty Applied: ${event.data.reason}`; type = 'penalty'; break;
+      case 'final_result': msg = '✓ Final result generated.'; type = 'success'; break;
+      case 'error':    msg = `Error: ${event.data}`; type = 'error'; break;
+      default: return null;
+    }
+    return (
+      <div key={idx} className={`log-entry ${type}`}>
+        <div>{msg}</div>
+        {thoughts && (
+          <div className="thinking-block">
+            <strong>Internal Logic:</strong><br />{thoughts}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <motion.div className="modal-overlay"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}>
+      <motion.div className="modal-panel"
+        initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
+        transition={{ duration: 0.22 }}
+        onClick={e => e.stopPropagation()}>
+
+        <div className="modal-header" style={{ borderColor: accentColor }}>
+          <div>
+            <div className="modal-title"><Terminal size={16} /> Pipeline Workflow</div>
+            <div className="modal-subtitle">{cv.filename}</div>
+          </div>
+          <button className="modal-close" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="modal-body">
+          <div className="console" style={{ height: '320px', marginBottom: '1rem' }}>
+            <div className="console-title">
+              <Terminal size={13} /> <span>PIPELINE LOGS</span>
+            </div>
+            {cv.logs.map((e, i) => renderLog(e, i))}
+          </div>
+
+          {cv.result && (
+            <div className="modal-result" style={{ borderColor: accentColor }}>
+              <div className="modal-result-title" style={{ color: accentColor }}>
+                <ShieldCheck size={14} /> FINAL OUTPUT
+              </div>
+              <div className="modal-result-body">{cv.result}</div>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+// ── SHARED SUB-COMPONENTS ─────────────────────────────────────────────────────
+const StatCard = ({ label, value, color }) => (
+  <div className="stat-card">
+    <span className="stat-value" style={color ? { color } : {}}>{value}</span>
+    <span className="stat-label">{label}</span>
+  </div>
+);
 
 const StepBox = ({ title, active, icon, status, penaltyCount, highlight, accentColor }) => (
   <motion.div
