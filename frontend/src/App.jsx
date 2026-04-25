@@ -140,8 +140,10 @@ function App() {
   const [batchRunning, setBatchRunning] = useState(false);
   const [expandedCv, setExpandedCv] = useState(null);
   const [uploadError, setUploadError] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
   const [workflowCv, setWorkflowCv] = useState(null);
   const [skipMeta, setSkipMeta] = useState(false);
+  const [useSearch, setUseSearch] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -186,7 +188,8 @@ function App() {
       sensitive_attrs: formData.sensitive_attrs,
       criteria: formData.criteria,
       system_prompt: formData.system_prompt,
-      skip_meta: skipMeta
+      skip_meta: skipMeta,
+      use_search: useSearch
     });
     const eventSource = new EventSource(`http://localhost:8000/process?${params}`);
 
@@ -260,6 +263,7 @@ function App() {
     }
     const fd = new FormData();
     valid.forEach(f => fd.append('files', f));
+    setIsUploading(true);
     try {
       const res = await fetch('http://localhost:8000/extract-cvs', { method: 'POST', body: fd });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
@@ -287,6 +291,8 @@ function App() {
       });
     } catch (e) {
       setUploadError(`Upload failed: ${e.message}`);
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -306,7 +312,8 @@ function App() {
           sensitive_attrs: formData.sensitive_attrs,
           criteria: formData.criteria,
           system_prompt: formData.system_prompt,
-          skip_meta: skipMeta
+          skip_meta: skipMeta,
+          use_search: useSearch
         });
         const es = new EventSource(`http://localhost:8000/process?${params}`);
         const cvLogs = [];
@@ -451,6 +458,7 @@ function App() {
             </div>
 
             <MetaToggle skipMeta={skipMeta} setSkipMeta={setSkipMeta} count={1} />
+            <SearchToggle useSearch={useSearch} setUseSearch={setUseSearch} />
 
             <button className="run-btn" style={{ '--rb': activeDomain.color }} onClick={handleRun} disabled={status === 'processing'}>
               {status === 'processing' ? 'Processing...' : `Run ${activeDomain.label} Pipeline`}
@@ -459,15 +467,26 @@ function App() {
         ) : (
           <>
             <div
-              className={`drop-zone ${isDragOver ? 'drag-over' : ''}`}
+              className={`drop-zone ${isDragOver ? 'drag-over' : ''} ${isUploading ? 'uploading' : ''}`}
               onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
               onDragLeave={() => setIsDragOver(false)}
               onDrop={e => { e.preventDefault(); setIsDragOver(false); handleFiles(e.dataTransfer.files); }}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !isUploading && fileInputRef.current?.click()}
             >
-              <Upload size={26} />
-              <span>Drop files here or click to browse</span>
-              <small>{activeDomain.batchFileHint}</small>
+              {isUploading ? (
+                <>
+                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
+                    <BrainCircuit size={26} color="var(--accent)" />
+                  </motion.div>
+                  <span style={{ color: 'var(--accent)' }}>Extracting & Uploading {fileInputRef.current?.files?.length || ''} files...</span>
+                </>
+              ) : (
+                <>
+                  <Upload size={26} />
+                  <span>Drop files here or click to browse</span>
+                  <small>{activeDomain.batchFileHint}</small>
+                </>
+              )}
               <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.txt"
                 style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
             </div>
@@ -507,6 +526,7 @@ function App() {
             </div>
 
             <MetaToggle skipMeta={skipMeta} setSkipMeta={setSkipMeta} count={queueList.length} />
+            <SearchToggle useSearch={useSearch} setUseSearch={setUseSearch} />
 
             <button className="run-btn" style={{ '--rb': activeDomain.color }}
               onClick={runBatch} disabled={batchRunning || !queueList.length}>
@@ -945,6 +965,26 @@ const MetaToggle = ({ skipMeta, setSkipMeta, count }) => {
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+};
+
+const SearchToggle = ({ useSearch, setUseSearch }) => {
+  return (
+    <div className={`meta-toggle-box ${!useSearch ? 'speed-mode' : ''}`}>
+      <div className="meta-toggle-row">
+        <div className="meta-toggle-label">
+          <span className="meta-toggle-title">Web Search (RAG)</span>
+          <span className="meta-toggle-sub">{useSearch ? 'Enabled — AI decides if needed' : 'Disabled — Full Offline Mode'}</span>
+        </div>
+        <button
+          className={`toggle-switch ${!useSearch ? 'off' : 'on'}`}
+          onClick={() => setUseSearch(p => !p)}
+          title="Toggle Web Search"
+        >
+          <motion.div className="toggle-thumb" layout transition={{ duration: 0.2 }} />
+        </button>
+      </div>
     </div>
   );
 };

@@ -1,11 +1,12 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sse-starlette
 ddgs
-google-generativeai
 openai
+google-generativeai
 python-dotenv
 google-api-python-client
 python-multipart
 pdfplumber
 python-docx
+chromadb

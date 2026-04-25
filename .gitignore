@@ -16,5 +16,8 @@ frontend/.vite/
 .DS_Store
 Thumbs.db
 
+# ChromaDB persistent memory — local only, do not commit
+agent_memory/
+
 # Secrets — keep example, ignore real
 !.env.example
