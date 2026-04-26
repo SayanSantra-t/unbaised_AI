@@ -259,7 +259,8 @@ system_prompt    Domain-specific AI instruction (auto-set by frontend)
 |------|------|
 | Sayan Santra | AI Pipeline Architecture / Backend |
 | Mohit Agarwal | Frontend / Batch File Upload / Multi-Domain UI |
-| *(add name)* | *(add role)* |
+| Ayan Mandal | Software Testing / Optimization  |
+| Srijan Maity | RAG implementation / Agent Memory  |
 
 ---
 
