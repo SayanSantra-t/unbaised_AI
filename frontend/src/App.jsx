@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import './App.css';
 
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 // ── DOMAIN PRESETS ───────────────────────────────────────────────────────────
 const DOMAINS = [
   {
@@ -191,7 +193,7 @@ function App() {
       skip_meta: skipMeta,
       use_search: useSearch
     });
-    const eventSource = new EventSource(`http://localhost:8000/process?${params}`);
+    const eventSource = new EventSource(`${API}/process?${params}`);
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -265,7 +267,7 @@ function App() {
     valid.forEach(f => fd.append('files', f));
     setIsUploading(true);
     try {
-      const res = await fetch('http://localhost:8000/extract-cvs', { method: 'POST', body: fd });
+      const res = await fetch('${API}/extract-cvs', { method: 'POST', body: fd });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const extracted = await res.json();
       setCvList(prev => {
@@ -315,7 +317,7 @@ function App() {
           skip_meta: skipMeta,
           use_search: useSearch
         });
-        const es = new EventSource(`http://localhost:8000/process?${params}`);
+        const es = new EventSource(`${API}/process?${params}`);
         const cvLogs = [];
         es.onmessage = (e) => {
           const p = JSON.parse(e.data);
