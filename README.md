@@ -53,7 +53,8 @@ flowchart TD
     AUD  <-.-> VM2
     META <-.-> VM3
 
-    BE -- "Local loop\nexhausted (3×)" --> SUP
+    %% Updated Fallback Logic
+    AUD -- "Local loop\nexhausted (3× penalties)" --> SUP
     SUP --> RESULT
 
     style EDGE fill:#1e293b,stroke:#334155,color:#f8fafc
