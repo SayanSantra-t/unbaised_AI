@@ -22,9 +22,9 @@ flowchart TD
 
         subgraph PIPELINE["AI Pipeline"]
             RAG["🔍 RAG\nDuckDuckGo Search"]
-            PRED["🧠 Predictor\nGemma-3"]
-            AUD["🛡️ Local Auditor\nQwen 2.5-0.5b"]
-            META["🔎 Meta-Auditor\nQwen 2.5-0.5b"]
+            PRED["🧠 Predictor\nGemma-3-4B"]
+            AUD["🛡️ Local Auditor\nGemma-3-4B"]
+            META["🔎 Meta-Auditor\nGemma-3-4B"]
         end
 
         subgraph MEMORY["Memory Streams (Vector DB)"]
